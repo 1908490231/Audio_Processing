@@ -1,0 +1,54 @@
+# =============================================================================
+# Audio Processing Tool - Configuration Template
+# =============================================================================
+# 这是配置文件模板，可以根据不同环境进行定制
+
+# Gemini API 设置
+gemini:
+  model_name: "gemini-2.5-pro"
+  max_retries: 3
+  retry_delay: 5  # 秒
+  timeout: 300    # 秒
+  
+# 文件处理设置
+file_processing:
+  max_file_size_mb: 100
+  supported_formats:
+    - "mp3"
+    - "wav" 
+    - "m4a"
+    - "flac"
+    - "ogg"
+  upload_timeout: 600
+  processing_check_interval: 10
+  max_processing_wait_time: 1800
+
+# 输出设置
+output:
+  default_format: "srt"
+  default_directory: "output"
+  create_timestamp_dirs: true
+  overwrite_existing: false
+  
+# 日志设置
+logging:
+  level: "INFO"
+  format: "structured"
+  file_path: "logs/audio_processing.log"
+  max_size_mb: 10
+  backup_count: 5
+  console_output: true
+  
+# 性能设置
+performance:
+  max_concurrent_uploads: 3
+  enable_progress_bar: true
+  enable_caching: true
+  cache_directory: ".cache"
+  
+# 高级设置
+advanced:
+  custom_prompt_file: null
+  enable_audio_validation: true
+  auto_cleanup_temp_files: true
+  debug_mode: false
