@@ -5,7 +5,7 @@
 
 # Gemini API 设置
 gemini:
-  model_name: "gemini-2.5-pro"
+  model_name: "gemini-2.5-flash"
   max_retries: 3
   retry_delay: 5  # 秒
   timeout: 300    # 秒
@@ -48,7 +48,7 @@ performance:
   
 # 高级设置
 advanced:
-  custom_prompt_file: null
+  custom_prompt_file: "config/custom_prompt.txt"
   enable_audio_validation: true
   auto_cleanup_temp_files: true
   debug_mode: false
