@@ -15,126 +15,140 @@ import datetime
 import concurrent.futures
 import threading
 from queue import Queue
+from key_manager import api_key_queue
 
 
 class HTTPGeminiClient:
     """基于HTTP的Gemini客户端"""
     
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
         self.base_url = "https://generativelanguage.googleapis.com"
         self.model = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash")
         
     def upload_file(self, file_path):
         """上传文件"""
         print(f"📤 开始上传文件: {Path(file_path).name}")
-        
         upload_url = f"{self.base_url}/upload/v1beta/files"
         
-        headers = {
-            'X-goog-api-key': self.api_key
-        }
-        
-        # 准备文件数据
-        with open(file_path, 'rb') as f:
-            files = {
-                'metadata': (None, json.dumps({
-                    "file": {
-                        "display_name": Path(file_path).name
-                    }
-                }), 'application/json'),
-                'data': (Path(file_path).name, f, 'audio/mpeg')
-            }
+        # +++ 密钥轮询核心逻辑 +++
+        api_key = None
+        try:
+            # 1. 从队列获取一个API Key
+            api_key = api_key_queue.get()
+            print(f"    (使用Key: ...{api_key[-4:]})")
+
+            # 2. 使用获取到的Key构建请求头
+            headers = {'X-goog-api-key': api_key}
             
-            response = requests.post(upload_url, headers=headers, files=files, timeout=120)
+            # 准备文件数据
+            with open(file_path, 'rb') as f:
+                files = {
+                    'metadata': (None, json.dumps({
+                        "file": {"display_name": Path(file_path).name}
+                    }), 'application/json'),
+                    'data': (Path(file_path).name, f, 'audio/mpeg')
+                }
+                response = requests.post(upload_url, headers=headers, files=files, timeout=120)
+
+            if response.status_code == 200:
+                result = response.json()
+                file_uri = result['file']['uri']
+                file_name = result['file']['name']
+                print(f"✅ 文件上传成功: {file_name}")
+                return file_uri, file_name
+            else:
+                raise Exception(f"文件上传失败: {response.status_code} - {response.text}")
         
-        if response.status_code == 200:
-            result = response.json()
-            file_uri = result['file']['uri']
-            file_name = result['file']['name']
-            print(f"✅ 文件上传成功: {file_name}")
-            return file_uri, file_name
-        else:
-            raise Exception(f"文件上传失败: {response.status_code} - {response.text}")
-    
+        finally:
+            # 3. 无论成功还是失败，都必须将Key放回队列
+            if api_key:
+                api_key_queue.put(api_key)
+
     def wait_for_file_processing(self, file_name):
         """等待文件处理完成"""
         print(f"⏳ 等待文件处理完成...")
-        
         get_url = f"{self.base_url}/v1beta/{file_name}"
-        headers = {'X-goog-api-key': self.api_key}
         
-        max_wait = 300  # 5分钟
+        max_wait = 300
         start_time = time.time()
         
-        while time.time() - start_time < max_wait:
-            response = requests.get(get_url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                file_info = response.json()
-                state = file_info.get('state', 'UNKNOWN')
+        # +++ 密钥轮询核心逻辑 +++
+        # 由于这个方法是循环检查，我们只在循环外获取一次key，检查完再归还
+        api_key = None
+        try:
+            api_key = api_key_queue.get()
+            print(f"    (使用Key: ...{api_key[-4:]} 进行状态检查)")
+            headers = {'X-goog-api-key': api_key}
+
+            while time.time() - start_time < max_wait:
+                response = requests.get(get_url, headers=headers, timeout=30)
                 
-                if state == 'ACTIVE':
-                    print(f"✅ 文件处理完成")
-                    return True
-                elif state == 'FAILED':
-                    raise Exception("文件处理失败")
+                if response.status_code == 200:
+                    file_info = response.json()
+                    state = file_info.get('state', 'UNKNOWN')
+                    if state == 'ACTIVE':
+                        print(f"✅ 文件处理完成")
+                        return True
+                    elif state == 'FAILED':
+                        raise Exception("文件处理失败")
+                    else:
+                        print(f"📋 文件状态: {state}")
+                        time.sleep(10)
                 else:
-                    print(f"📋 文件状态: {state}")
+                    print(f"⚠️  检查文件状态失败: {response.status_code}")
                     time.sleep(10)
-            else:
-                print(f"⚠️  检查文件状态失败: {response.status_code}")
-                time.sleep(10)
-        
-        raise Exception("文件处理超时")
-    
+            
+            raise Exception("文件处理超时")
+
+        finally:
+            if api_key:
+                api_key_queue.put(api_key)
     def transcribe_audio(self, file_uri):
         """转录音频"""
         print(f"🎤 开始转录音频...")
-        
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         
-        headers = {
-            'Content-Type': 'application/json',
-            'X-goog-api-key': self.api_key
-        }
-        
-        # 加载提示词（只使用配置文件）
+        # 加载提示词
         prompt_file = Path("config/default_prompt.txt")
         if prompt_file.exists():
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt = f.read().strip()
         else:
             raise FileNotFoundError(f"提示词文件不存在: {prompt_file}")
-
         if not prompt:
-            raise ValueError("提示词文件为空，请检查 config/default_prompt.txt 文件内容")
-        
+            raise ValueError("提示词文件为空")
+
         data = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {"file_data": {"file_uri": file_uri, "mime_type": "audio/mpeg"}}
-                    ]
-                }
-            ]
+            "contents": [{"parts": [{"text": prompt}, {"file_data": {"file_uri": file_uri, "mime_type": "audio/mpeg"}}]}]
         }
         
-        response = requests.post(url, headers=headers, json=data, timeout=300)
-        
-        if response.status_code == 200:
-            result = response.json()
+        # +++ 密钥轮询核心逻辑 +++
+        api_key = None
+        try:
+            api_key = api_key_queue.get()
+            print(f"    (使用Key: ...{api_key[-4:]})")
             
-            if 'candidates' in result and len(result['candidates']) > 0:
-                text = result['candidates'][0]['content']['parts'][0]['text']
-                print(f"✅ 转录完成，内容长度: {len(text)} 字符")
-                return text
+            headers = {
+                'Content-Type': 'application/json',
+                'X-goog-api-key': api_key
+            }
+            
+            response = requests.post(url, headers=headers, json=data, timeout=300)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    text = result['candidates'][0]['content']['parts'][0]['text']
+                    print(f"✅ 转录完成，内容长度: {len(text)} 字符")
+                    return text
+                else:
+                    raise Exception("转录返回空结果")
             else:
-                raise Exception("转录返回空结果")
-        else:
-            raise Exception(f"转录失败: {response.status_code} - {response.text}")
-
+                raise Exception(f"转录失败: {response.status_code} - {response.text}")
+        
+        finally:
+            if api_key:
+                api_key_queue.put(api_key)
 
 def process_single_file(client, audio_file_path, output_path=None):
     """处理单个音频文件"""
@@ -471,25 +485,15 @@ def save_failed_files_info(failed_files, folder_path):
 def main():
     """主函数"""
     print("🎵 HTTP批量音频转录工具")
-    print("=" * 50)
-    print("使用稳定的HTTP API，避免网络问题")
-    print("支持并行处理，提高效率")
-    print()
+    # ...
+    
+    # # 加载环境变量 (这行已被移除或注释掉，因为 key_manager 已经加载过了)
+    # load_dotenv()
 
-    # 加载环境变量
-    load_dotenv()
-
-    # 检查API密钥和模型
-    api_key = os.getenv('GEMINI_API_KEY')
     model_name = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash')
-
-    if not api_key:
-        print("❌ 错误：未找到API密钥")
-        print("请确保在 .env 文件中设置了 GEMINI_API_KEY")
-        return
-
-    print("✅ API密钥已加载")
     print(f"🤖 使用模型: {model_name}")
+    
+    # ... 后续代码不变 ...
 
     # 获取文件夹路径
     folder_path = input("请输入音频文件夹路径: ").strip()
