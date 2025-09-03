@@ -7,8 +7,9 @@
 import os
 import json
 from pathlib import Path
-from dotenv import load_dotenv
+# from dotenv import load_dotenv # 移除，由key_manager处理
 from 批量处理 import HTTPGeminiClient, process_single_file
+from key_manager import api_manager # 导入API管理器
 
 
 def list_failed_files():
@@ -114,19 +115,19 @@ def main():
     print("🔄 失败文件重新处理工具")
     print("=" * 50)
     
-    # 加载环境变量
-    load_dotenv()
+    # 加载环境变量 (由key_manager处理)
+    # load_dotenv()
     
-    # 检查API密钥
-    api_key = os.getenv('GEMINI_API_KEY')
+    # 检查API密钥 (由key_manager处理)
+    # api_key = os.getenv('GEMINI_API_KEY')
     model_name = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash')
     
-    if not api_key:
-        print("❌ 错误：未找到API密钥")
-        print("请确保在 .env 文件中设置了 GEMINI_API_KEY")
-        return
+    # if not api_key:
+    #     print("❌ 错误：未找到API密钥")
+    #     print("请确保在 .env 文件中设置了 GEMINI_API_KEY")
+    #     return
     
-    print("✅ API密钥已加载")
+    print("✅ API密钥已加载 (由key_manager管理)")
     print(f"🤖 使用模型: {model_name}")
     
     # 列出失败文件记录

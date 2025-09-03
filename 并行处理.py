@@ -6,8 +6,8 @@
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from 批量处理 import process_folder
+from key_manager import api_manager # 导入API管理器
 
 
 def main():
@@ -18,19 +18,12 @@ def main():
     print("⚠️  注意：并行处理会消耗更多系统资源")
     print()
 
-    # 加载环境变量
-    load_dotenv()
+    # 加载环境变量 (由key_manager处理)
 
-    # 检查API密钥和模型
-    api_key = os.getenv('GEMINI_API_KEY')
+    # 检查API密钥和模型 (由key_manager处理)
     model_name = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash')
 
-    if not api_key:
-        print("❌ 错误：未找到API密钥")
-        print("请确保在 .env 文件中设置了 GEMINI_API_KEY")
-        return
-
-    print("✅ API密钥已加载")
+    print("✅ API密钥已加载 (由key_manager管理)")
     print(f"🤖 使用模型: {model_name}")
     
     # 获取文件夹路径
@@ -108,8 +101,8 @@ def main():
     print("=" * 50)
     
     success = process_folder(
-        folder_path=str(folder_path),
-        output_folder=output_folder,
+        folder_path_str=str(folder_path),
+        output_folder_str=output_folder,
         parallel=True,
         max_workers=max_workers
     )
