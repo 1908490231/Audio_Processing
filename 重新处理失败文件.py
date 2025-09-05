@@ -43,7 +43,7 @@ def load_failed_files(json_file):
     return data['failed_files']
 
 
-def retry_failed_files(failed_files):
+def retry_failed_files(failed_files, srt_input_folder=None):
     """重新处理失败的文件"""
     if not failed_files:
         print("❌ 没有失败文件需要重新处理")
@@ -72,9 +72,25 @@ def retry_failed_files(failed_files):
                 'retry_time': time.strftime("%Y-%m-%d %H:%M:%S")
             })
             continue
+
+        # 尝试找到对应的SRT文件
+        srt_file_path = None
+        if srt_input_folder and Path(srt_input_folder).is_dir():
+            # 假设 failed_file['file_path'] 是相对于原始音频文件夹的路径
+            # 我们需要从 full_path 中提取原始音频文件夹的根路径
+            # 这是一个简化的处理，可能需要更健壮的逻辑来确定原始音频文件夹
+            # 这里假设 failed_file['full_path'] 包含了原始的相对路径信息
+            original_audio_folder_root = Path(failed_file['full_path']).parent.parent # 假设两级目录
+            relative_to_original_audio_folder = Path(failed_file['file_path'])
+            expected_srt_file = (Path(srt_input_folder) / relative_to_original_audio_folder).with_suffix('.srt')
+            if expected_srt_file.exists():
+                srt_file_path = expected_srt_file
+                print(f"  匹配到SRT文件: {srt_file_path.name}")
+            else:
+                print(f"  未找到对应SRT文件: {expected_srt_file.name}")
         
         # 重新处理文件
-        success, error_msg = process_single_file(client, file_path)
+        success, error_msg = process_single_file(client, file_path, srt_file_path=srt_file_path)
         
         if success:
             successful_count += 1
@@ -157,6 +173,8 @@ def main():
     
     # 加载失败文件信息
     failed_files = load_failed_files(selected_file)
+
+    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
     
     print(f"\n📋 失败文件详情:")
     for i, failed_file in enumerate(failed_files, 1):
@@ -170,7 +188,7 @@ def main():
         return
     
     # 重新处理
-    retry_failed_files(failed_files)
+    retry_failed_files(failed_files, srt_input_folder)
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ class HTTPGeminiClient:
         self.base_url = "https://generativelanguage.googleapis.com"
         self.model = os.getenv("GEMINI_MODEL_NAME", "gemini-1.5-flash-latest") # 建议使用最新模型
 
-    def upload_file(self, file_path, api_key): # 接收 api_key
+    def upload_file(self, file_path, api_key, mime_type="audio/mpeg"):
         """上传文件"""
         print(f"📤 开始上传文件: {Path(file_path).name}")
         upload_url = f"{self.base_url}/upload/v1beta/files"
@@ -36,7 +36,7 @@ class HTTPGeminiClient:
         with open(file_path, 'rb') as f:
             files = {
                 'metadata': (None, json.dumps({"file": {"display_name": Path(file_path).name}}), 'application/json'),
-                'data': (Path(file_path).name, f, 'audio/mpeg')
+                'data': (Path(file_path).name, f, mime_type)
             }
             
             # 将任务委托给api_manager执行，并传入固定的api_key
@@ -85,7 +85,7 @@ class HTTPGeminiClient:
         
         raise Exception("文件处理超时")
 
-    def transcribe_audio(self, file_uri, api_key): # 接收 api_key
+    def transcribe_audio(self, file_uri, api_key, srt_file_uri=None): # 接收 api_key 和 srt_file_uri
         """转录音频"""
         print(f"🎤 开始转录音频...")
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
@@ -100,8 +100,17 @@ class HTTPGeminiClient:
             raise ValueError("提示词文件为空")
             
         headers = {'Content-Type': 'application/json'}
+        
+        parts = []
+        parts.append({"text": prompt})
+        parts.append({"file_data": {"file_uri": file_uri, "mime_type": "audio/mpeg"}})
+        
+        if srt_file_uri:
+            print(f"  📝 将SRT文件 ({srt_file_uri}) 作为上下文发送给模型...")
+            parts.append({"file_data": {"file_uri": srt_file_uri, "mime_type": "text/plain"}})
+
         data = {
-            "contents": [{"parts": [{"text": prompt}, {"file_data": {"file_uri": file_uri, "mime_type": "audio/mpeg"}}]}]
+            "contents": [{"parts": parts}]
         }
         
         # 委托api_manager执行转录请求，并传入固定的api_key
@@ -131,8 +140,8 @@ class HTTPGeminiClient:
         return text
 
 
-def process_single_file(client, audio_file_path, output_path=None):
-    """【已修改】处理单个音频文件"""
+def process_single_file(client, audio_file_path, srt_file_path=None, output_path=None):
+    """【已修改】处理单个音频文件，并可选上传对应的SRT文件"""
     audio_file = Path(audio_file_path)
 
     # 生成输出路径
@@ -145,9 +154,21 @@ def process_single_file(client, audio_file_path, output_path=None):
         # 使用上下文管理器为这个文件的处理流程获取一个固定的Key
         with api_manager.get_key_for_session() as api_key:
             print(f"  (为 {audio_file.name} 分配了Key ...{api_key[-4:]})")
-            file_uri, file_name = client.upload_file(audio_file, api_key)
-            client.wait_for_file_processing(file_name, api_key)
-            transcription = client.transcribe_audio(file_uri, api_key)
+            
+            # 上传音频文件
+            audio_file_uri, audio_file_name = client.upload_file(audio_file, api_key, mime_type="audio/mpeg")
+            client.wait_for_file_processing(audio_file_name, api_key)
+
+            # 如果有SRT文件，也上传它
+            srt_file_uri = None
+            if srt_file_path and Path(srt_file_path).exists():
+                print(f"  📤 开始上传对应的SRT文件: {Path(srt_file_path).name}")
+                srt_file_uri, srt_file_name = client.upload_file(srt_file_path, api_key, mime_type="text/plain") # SRT通常是纯文本
+                client.wait_for_file_processing(srt_file_name, api_key)
+                print(f"  ✅ SRT文件上传成功: {srt_file_name}")
+
+            # 转录音频 (现在可以根据需要使用srt_file_uri)
+            transcription = client.transcribe_audio(audio_file_uri, api_key, srt_file_uri) # 传递 srt_file_uri
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -166,14 +187,14 @@ def process_single_file(client, audio_file_path, output_path=None):
 
 def process_single_file_parallel(args):
     """【已修改】并行处理的包装函数"""
-    audio_file_path, output_path, thread_id = args
+    audio_file_path, srt_file_path, output_path, thread_id = args
     client = HTTPGeminiClient()
     audio_file = Path(audio_file_path)
     print(f"[线程{thread_id}] 开始处理: {audio_file.name}")
 
     # 并行处理也需要将整个流程包裹起来
     try:
-        success, error_msg = process_single_file(client, audio_file_path, output_path)
+        success, error_msg = process_single_file(client, audio_file_path, srt_file_path, output_path)
         # ... (rest of the function is okay, but we can simplify since process_single_file does the work)
         result = {
             'file_path': str(audio_file_path),
@@ -201,8 +222,6 @@ def process_single_file_parallel(args):
         }
 
 
-# ... (The rest of 批量处理.py: get_all_audio_files, process_folder, etc., do not need changes) ...
-
 def get_all_audio_files(folder_path):
     """递归扫描并返回所有支持的音频文件列表"""
     print(f"🔍 正在扫描文件夹及其子文件夹: {folder_path}...")
@@ -226,15 +245,40 @@ def get_all_audio_files(folder_path):
     return audio_files
 
 
-def process_folder(folder_path_str, output_folder_str=None, parallel=False, max_workers=2):
+def get_paired_audio_and_srt_files(audio_folder_path, srt_folder_path=None):
+    """扫描音频文件夹，并尝试在SRT文件夹中找到对应的SRT文件"""
+    audio_files = get_all_audio_files(audio_folder_path)
+    paired_files = []
+
+    if srt_folder_path and Path(srt_folder_path).is_dir():
+        srt_folder = Path(srt_folder_path)
+        print(f"🔍 正在匹配SRT文件: {srt_folder}...")
+        for audio_file in audio_files:
+            relative_path = audio_file.relative_to(audio_folder_path)
+            expected_srt_file = (srt_folder / relative_path).with_suffix('.srt')
+            if expected_srt_file.exists():
+                paired_files.append((audio_file, expected_srt_file))
+                print(f"  匹配到: {audio_file.name} <-> {expected_srt_file.name}")
+            else:
+                paired_files.append((audio_file, None))
+                print(f"  未找到SRT: {audio_file.name}")
+    else:
+        print("⚠️ 未提供有效的SRT文件夹路径，将只处理音频文件。")
+        for audio_file in audio_files:
+            paired_files.append((audio_file, None))
+
+    return paired_files
+
+
+def process_folder(folder_path_str, output_folder_str=None, parallel=False, max_workers=2, srt_input_folder_str=None):
     """批量处理文件夹中的音频文件的主入口"""
     folder_path = Path(folder_path_str)
     if not folder_path.is_dir():
         print(f"❌ 路径不是一个有效的文件夹: {folder_path}")
         return False
 
-    audio_files = get_all_audio_files(folder_path)
-    if not audio_files:
+    paired_files = get_paired_audio_and_srt_files(folder_path, srt_input_folder_str)
+    if not paired_files:
         return False
 
     if parallel:
@@ -244,13 +288,13 @@ def process_folder(folder_path_str, output_folder_str=None, parallel=False, max_
     print("=" * 50)
     
     tasks = []
-    for i, audio_file in enumerate(audio_files):
+    for i, (audio_file, srt_file) in enumerate(paired_files):
         output_path = None
         if output_folder_str:
             output_dir = Path(output_folder_str)
             relative_path = audio_file.relative_to(folder_path)
             output_path = output_dir / relative_path.with_suffix('.srt')
-        tasks.append((str(audio_file), output_path, i + 1))
+        tasks.append((str(audio_file), str(srt_file) if srt_file else None, output_path, i + 1))
 
     results = []
     if parallel:
@@ -260,17 +304,17 @@ def process_folder(folder_path_str, output_folder_str=None, parallel=False, max_
                 results.append(future.result())
     else:
         client = HTTPGeminiClient()
-        for i, (audio_file_path, output_path, _) in enumerate(tasks):
-            print(f"\n[{i+1}/{len(tasks)}] 正在处理: {Path(audio_file_path).name}")
+        for i, (audio_file_path, srt_file_path, output_path, _) in enumerate(tasks):
+            print(f"\n[{i+1}/{len(paired_files)}] 正在处理: {Path(audio_file_path).name}")
             print("-" * 30)
-            success, error_msg = process_single_file(client, audio_file_path, output_path)
+            success, error_msg = process_single_file(client, audio_file_path, srt_file_path, output_path)
             results.append({'success': success, 'file_path': audio_file_path, 'error': error_msg, 'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")})
-            if i < len(tasks) - 1:
+            if i < len(paired_files) - 1:
                 print("⏳ 等待5秒后处理下一个文件...")
                 time.sleep(5)
 
     # 统计和报告结果
-    report_results(results, len(audio_files), folder_path)
+    report_results(results, len(paired_files), folder_path)
     return any(r['success'] for r in results)
 
 
@@ -344,6 +388,8 @@ def main():
         print("❌ 文件夹路径不能为空")
         return
 
+    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
+
     print("\n处理模式:\n1. 顺序处理 (稳定)\n2. 并行处理 (高效)")
     mode_choice = input("请选择处理模式 (1 或 2): ").strip()
     parallel = mode_choice == "2"
@@ -360,7 +406,7 @@ def main():
     if choice == "2":
         output_folder = input("请输入输出文件夹路径: ").strip() or None
 
-    process_folder(folder_path, output_folder, parallel, max_workers)
+    process_folder(folder_path, output_folder, parallel, max_workers, srt_input_folder) # Pass srt_input_folder
 
 
 if __name__ == "__main__":

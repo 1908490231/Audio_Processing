@@ -41,6 +41,8 @@ def main():
             continue
             
         break
+
+    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
     
     print(f"\n📁 目标文件夹: {folder_path}")
     print("🔄 开始处理...")
@@ -48,7 +50,8 @@ def main():
     # 开始批量处理（在原文件夹中生成SRT文件）
     success = process_folder(
         folder_path_str=str(folder_path),
-        output_folder_str=None
+        output_folder_str=None,
+        srt_input_folder_str=srt_input_folder # Pass srt_input_folder
     )
     
     if success:

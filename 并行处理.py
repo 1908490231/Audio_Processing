@@ -37,6 +37,8 @@ def main():
     if not folder_path.exists():
         print(f"❌ 文件夹不存在: {folder_path}")
         return
+
+    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
     
     # 并行设置
     print("\n🔧 并行处理设置:")
@@ -88,6 +90,10 @@ def main():
     print(f"   输出位置: {'原文件夹' if not output_folder else output_folder}")
     print(f"   并行线程: {max_workers}")
     print(f"   处理模式: 并行处理")
+    if srt_input_folder:
+        print(f"   SRT输入文件夹: {srt_input_folder}")
+    else:
+        print("   SRT输入文件夹: 未指定")
     
     # 确认开始
     confirm = input("\n是否开始处理？(y/n): ").strip().lower()
@@ -104,7 +110,8 @@ def main():
         folder_path_str=str(folder_path),
         output_folder_str=output_folder,
         parallel=True,
-        max_workers=max_workers
+        max_workers=max_workers,
+        srt_input_folder_str=srt_input_folder # Pass srt_input_folder
     )
     
     if success:
