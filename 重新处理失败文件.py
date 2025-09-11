@@ -40,7 +40,7 @@ def load_failed_files(json_file):
     """加载失败文件信息"""
     with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    return data['failed_files']
+    return data['failed_files'], data.get('srt_input_folder') # Return srt_input_folder
 
 
 def retry_failed_files(failed_files, srt_input_folder=None):
@@ -76,13 +76,11 @@ def retry_failed_files(failed_files, srt_input_folder=None):
         # 尝试找到对应的SRT文件
         srt_file_path = None
         if srt_input_folder and Path(srt_input_folder).is_dir():
-            # 假设 failed_file['file_path'] 是相对于原始音频文件夹的路径
-            # 我们需要从 full_path 中提取原始音频文件夹的根路径
-            # 这是一个简化的处理，可能需要更健壮的逻辑来确定原始音频文件夹
-            # 这里假设 failed_file['full_path'] 包含了原始的相对路径信息
-            original_audio_folder_root = Path(failed_file['full_path']).parent.parent # 假设两级目录
-            relative_to_original_audio_folder = Path(failed_file['file_path'])
-            expected_srt_file = (Path(srt_input_folder) / relative_to_original_audio_folder).with_suffix('.srt')
+            # failed_file['file_path'] 已经是相对于原始音频文件夹的路径
+            # 例如: "youtube2音频/audio.mp3"
+            # 我们需要将其与 srt_input_folder 结合
+            relative_path_from_original_audio_root = Path(failed_file['file_path'])
+            expected_srt_file = (Path(srt_input_folder) / relative_path_from_original_audio_root).with_suffix('.srt')
             if expected_srt_file.exists():
                 srt_file_path = expected_srt_file
                 print(f"  匹配到SRT文件: {srt_file_path.name}")
@@ -172,10 +170,8 @@ def main():
             return
     
     # 加载失败文件信息
-    failed_files = load_failed_files(selected_file)
+    failed_files, srt_input_folder = load_failed_files(selected_file)
 
-    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
-    
     print(f"\n📋 失败文件详情:")
     for i, failed_file in enumerate(failed_files, 1):
         print(f"  {i}. {failed_file['file_path']}")

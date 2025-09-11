@@ -175,14 +175,14 @@ def process_single_file(client, audio_file_path, srt_file_path=None, output_path
             f.write(transcription)
 
         print(f"✅ 成功处理: {audio_file.name} -> {output_path.name}")
-        return True, None
+        return True, None, str(audio_file) # 返回 full_path
 
     except Exception as e:
         print(f"❌ 处理失败: {audio_file.name} - {e}")
         # 引入 traceback 来获取更详细的错误信息
         import traceback
         traceback.print_exc()
-        return False, str(e)
+        return False, str(e), str(audio_file) # 返回 full_path
 
 
 def process_single_file_parallel(args):
@@ -194,15 +194,16 @@ def process_single_file_parallel(args):
 
     # 并行处理也需要将整个流程包裹起来
     try:
-        success, error_msg = process_single_file(client, audio_file_path, srt_file_path, output_path)
-        # ... (rest of the function is okay, but we can simplify since process_single_file does the work)
+        success, error_msg, full_path = process_single_file(client, audio_file_path, srt_file_path, output_path) # 接收 full_path
+        # ...existing code...
         result = {
             'file_path': str(audio_file_path),
             'output_path': str(output_path) if output_path else None,
             'success': success,
             'error': error_msg,
             'thread_id': thread_id,
-            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+            'full_path': full_path # 添加 full_path
         }
         if success:
             print(f"[线程{thread_id}] ✅ 完成: {audio_file.name}")
@@ -218,7 +219,8 @@ def process_single_file_parallel(args):
             'success': False,
             'error': error_msg,
             'thread_id': thread_id,
-            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S")
+            'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+            'full_path': str(audio_file_path) # 异常情况下也添加 full_path
         }
 
 
@@ -250,20 +252,32 @@ def get_paired_audio_and_srt_files(audio_folder_path, srt_folder_path=None):
     audio_files = get_all_audio_files(audio_folder_path)
     paired_files = []
 
-    if srt_folder_path and Path(srt_folder_path).is_dir():
-        srt_folder = Path(srt_folder_path)
-        print(f"🔍 正在匹配SRT文件: {srt_folder}...")
-        for audio_file in audio_files:
-            relative_path = audio_file.relative_to(audio_folder_path)
-            expected_srt_file = (srt_folder / relative_path).with_suffix('.srt')
-            if expected_srt_file.exists():
-                paired_files.append((audio_file, expected_srt_file))
-                print(f"  匹配到: {audio_file.name} <-> {expected_srt_file.name}")
-            else:
+    if srt_folder_path:
+        srt_path = Path(srt_folder_path)
+        if srt_path.is_dir():
+            print(f"🔍 正在匹配SRT文件: {srt_path}...")
+            for audio_file in audio_files:
+                relative_path = audio_file.relative_to(audio_folder_path)
+                expected_srt_file = (srt_path / relative_path).with_suffix('.srt')
+                if expected_srt_file.exists():
+                    paired_files.append((audio_file, expected_srt_file))
+                else:
+                    paired_files.append((audio_file, None))
+                    print(f"  未找到SRT: {audio_file.name}")
+        elif srt_path.is_file():
+            print(f"🔍 正在匹配单个SRT文件: {srt_path.name}...")
+            for audio_file in audio_files:
+                if audio_file.with_suffix('.srt').name == srt_path.name:
+                    paired_files.append((audio_file, srt_path))
+                else:
+                    paired_files.append((audio_file, None))
+                    print(f"  未找到SRT: {audio_file.name}")
+        else:
+            print("⚠️ 未提供有效的SRT文件或文件夹路径，将只处理音频文件。")
+            for audio_file in audio_files:
                 paired_files.append((audio_file, None))
-                print(f"  未找到SRT: {audio_file.name}")
     else:
-        print("⚠️ 未提供有效的SRT文件夹路径，将只处理音频文件。")
+        print("⚠️ 未提供SRT文件或文件夹路径，将只处理音频文件。")
         for audio_file in audio_files:
             paired_files.append((audio_file, None))
 
@@ -314,11 +328,10 @@ def process_folder(folder_path_str, output_folder_str=None, parallel=False, max_
                 time.sleep(5)
 
     # 统计和报告结果
-    report_results(results, len(paired_files), folder_path)
-    return any(r['success'] for r in results)
+    report_results(results, len(paired_files), folder_path, srt_input_folder_str) # Pass srt_input_folder
 
 
-def report_results(results, total_files, folder_path):
+def report_results(results, total_files, folder_path, srt_input_folder=None):
     """统计并打印最终处理结果"""
     successful_count = sum(1 for r in results if r['success'])
     failed_results = [r for r in results if not r['success']]
@@ -337,14 +350,14 @@ def report_results(results, total_files, folder_path):
             print(f"  - {relative_path}")
             failed_files_to_save.append({
                 'file_path': str(relative_path),
-                'full_path': failed_file['file_path'],
+                'full_path': failed_file['full_path'], # 从结果中获取 full_path
                 'error': failed_file['error'],
                 'timestamp': failed_file['timestamp']
             })
-        save_failed_files_info(failed_files_to_save, folder_path)
+        save_failed_files_info(failed_files_to_save, folder_path, srt_input_folder) # Pass srt_input_folder
 
 
-def save_failed_files_info(failed_files, folder_path):
+def save_failed_files_info(failed_files, folder_path, srt_input_folder=None):
     """保存失败文件信息到文件"""
     if not failed_files: return
     failed_dir = Path("failed_files")
@@ -357,6 +370,7 @@ def save_failed_files_info(failed_files, folder_path):
         json.dump({
             "processing_time": datetime.datetime.now().isoformat(),
             "source_folder": str(folder_path),
+            "srt_input_folder": str(srt_input_folder) if srt_input_folder else None, # Save srt_input_folder
             "total_failed": len(failed_files),
             "failed_files": failed_files
         }, f, ensure_ascii=False, indent=2)
@@ -383,12 +397,19 @@ def main():
     model_name = os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash')
     print(f"🤖 使用模型: {model_name}")
 
-    folder_path = input("请输入音频文件夹路径: ").strip()
-    if not folder_path:
-        print("❌ 文件夹路径不能为空")
+    input_path_str = input("请输入音频文件或文件夹路径: ").strip()
+    if not input_path_str:
+        print("❌ 路径不能为空")
         return
 
-    srt_input_folder = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
+    input_path = Path(input_path_str)
+
+    if not input_path.exists():
+        print(f"❌ 路径不存在: {input_path}")
+        return
+
+    srt_input_folder_str = input("请输入对应的SRT文件文件夹路径 (如果不需要上传现有SRT文件，请留空): ").strip() or None
+    srt_input_folder = Path(srt_input_folder_str) if srt_input_folder_str else None
 
     print("\n处理模式:\n1. 顺序处理 (稳定)\n2. 并行处理 (高效)")
     mode_choice = input("请选择处理模式 (1 或 2): ").strip()
@@ -400,13 +421,49 @@ def main():
             max_workers = int(worker_choice)
         print(f"✅ 将同时处理 {max_workers} 个文件")
 
-    print("\n输出选项:\n1. 在原文件夹中生成 SRT 文件\n2. 指定输出文件夹")
+    print("\n输出选项:\n1. 在原位置生成 SRT 文件\n2. 指定输出文件夹")
     choice = input("请选择 (1 或 2): ").strip()
     output_folder = None
     if choice == "2":
-        output_folder = input("请输入输出文件夹路径: ").strip() or None
+        output_folder_str = input("请输入输出文件夹路径: ").strip() or None
+        if output_folder_str:
+            output_folder = Path(output_folder_str)
+            output_folder.mkdir(parents=True, exist_ok=True)
 
-    process_folder(folder_path, output_folder, parallel, max_workers, srt_input_folder) # Pass srt_input_folder
+    if input_path.is_file():
+        print(f"\n🚀 开始处理单个文件: {input_path.name}")
+        client = HTTPGeminiClient()
+        
+        single_output_path = None
+        if output_folder:
+            single_output_path = output_folder / input_path.with_suffix('.srt').name
+        else:
+            single_output_path = input_path.parent / input_path.with_suffix('.srt').name
+
+        single_srt_file_path = None
+        if srt_input_folder:
+            if srt_input_folder.is_dir():
+                expected_srt_file = srt_input_folder / input_path.with_suffix('.srt').name
+                if expected_srt_file.exists():
+                    single_srt_file_path = expected_srt_file
+            elif srt_input_folder.is_file():
+                if input_path.with_suffix('.srt').name == srt_input_folder.name:
+                    single_srt_file_path = srt_input_folder
+
+        success, error_msg, full_path = process_single_file(client, str(input_path), str(single_srt_file_path) if single_srt_file_path else None, str(single_output_path))
+        
+        results = [{
+            'file_path': str(input_path),
+            'output_path': str(single_output_path),
+            'success': success,
+            'error': error_msg,
+            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'full_path': full_path # 添加 full_path
+        }]
+        report_results(results, 1, input_path.parent, srt_input_folder_str)
+
+    elif input_path.is_dir():
+        process_folder(str(input_path), str(output_folder) if output_folder else None, parallel, max_workers, srt_input_folder_str)
 
 
 if __name__ == "__main__":
